@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <cstdint>
 #include "esp_camera.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -9,9 +10,10 @@
 #include "camera_pins.hpp"
 
 namespace {
-constexpr const char* kTag = "EdgeFlow_BringUp";
+constexpr const char* kTag = "DataCollector";
+constexpr uint8_t kFrameHeader[4] = {0xAA, 0xBB, 0xCC, 0xDD};
 
-esp_err_t init_camera() {
+esp_err_t init_camera_jpeg() {
     camera_config_t config = {};
     config.ledc_channel = LEDC_CHANNEL_0;
     config.ledc_timer   = LEDC_TIMER_0;
@@ -32,11 +34,11 @@ esp_err_t init_camera() {
     config.pin_pwdn     = edgeflow::hw::kPinPwdn;
     config.pin_reset    = edgeflow::hw::kPinReset;
     
-    config.xclk_freq_hz = 20000000; // 20 MHz XCLK
-    config.pixel_format = PIXFORMAT_GRAYSCALE;
-    config.frame_size   = FRAMESIZE_QVGA; // 320x240 bazowo pod wycięcie ROI
-    config.jpeg_quality = 12;
-    config.fb_count     = 2; // Podwójne buforowanie w PSRAM
+    config.xclk_freq_hz = 20000000;
+    config.pixel_format = PIXFORMAT_JPEG;
+    config.frame_size   = FRAMESIZE_VGA; // 640x480 resolution for precise framing and ROI selection
+    config.jpeg_quality = 10;            // 1-63, lower values mean higher image fidelity
+    config.fb_count     = 2;             // Double buffering in PSRAM
     config.fb_location  = CAMERA_FB_IN_PSRAM;
     config.grab_mode    = CAMERA_GRAB_LATEST;
 
@@ -45,40 +47,27 @@ esp_err_t init_camera() {
 } // namespace
 
 extern "C" void app_main(void) {
-    ESP_LOGI(kTag, "Starting EdgeFlow-S3 Hardware Bring-up...");
-
-    size_t psram_size = esp_psram_get_size();
-    size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    ESP_LOGI(kTag, "PSRAM Total: %zu KB | Free: %zu KB", psram_size / 1024, free_psram / 1024);
-
-    if (init_camera() != ESP_OK) {
-        ESP_LOGE(kTag, "Camera initialization failed! Check FPC ribbon orientation.");
+    if (init_camera_jpeg() != ESP_OK) {
+        ESP_LOGE(kTag, "Camera initialization failed");
         return;
     }
 
     sensor_t* s = esp_camera_sensor_get();
-    ESP_LOGI(kTag, "Camera initialized successfully. Sensor PID: 0x%02x", s->id.PID);
+    // Slightly boost sharpness to enhance edge boundaries for vehicle detection
+    s->set_sharpness(s, 1);
 
     while (true) {
-        int64_t t_start = esp_timer_get_time();
         camera_fb_t* fb = esp_camera_fb_get();
-        int64_t t_end = esp_timer_get_time();
-
-        if (!fb) {
-            ESP_LOGE(kTag, "Frame buffer capture failed");
-        } else {
-            // Obliczamy średnią jasność klatki jako szybki test dostępu do bufora w PSRAM
-            uint64_t sum = 0;
-            for (size_t i = 0; i < fb->len; ++i) {
-                sum += fb->buf[i];
-            }
-            uint8_t avg_lum = static_cast<uint8_t>(sum / fb->len);
-
-            ESP_LOGI(kTag, "Frame %zux%zu (%zu B) | Capture: %lld us | Avg Luminance: %u/255",
-                     fb->width, fb->height, fb->len, (t_end - t_start), avg_lum);
+        if (fb) {
+            uint32_t len = fb->len;
+            // Transmit sync header and payload over serial stdout (UART / USB CDC)
+            fwrite(kFrameHeader, 1, sizeof(kFrameHeader), stdout);
+            fwrite(&len, 1, sizeof(len), stdout);
+            fwrite(fb->buf, 1, len, stdout);
+            fflush(stdout);
 
             esp_camera_fb_return(fb);
         }
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(50)); // Target ~20 FPS acquisition rate
     }
 }

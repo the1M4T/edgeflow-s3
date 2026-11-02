@@ -1,0 +1,34 @@
+# ESP-IDF build outputs and generated files
+build/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
+
+# Python virtual environment and bytecode cache
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Raw datasets and temporary frame captures
+dataset_raw/
+*.jpg
+*.jpeg
+*.png
+
+# IDE / Editor configurations
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/c_cpp_properties.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS specific files
+.DS_Store
+Thumbs.db
